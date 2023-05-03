@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "type": "lldb",
+        "request": "launch",
+        "name": "Launch Zig",
+        "program": "${workspaceFolder}/zig/zig-pek/zig-out/bin/zig-pek",
+        "args": [],
+        "cwd": "${workspaceFolder}/zig",
+        "preLaunchTask": ""
+      },
+      {
+        "type": "lldb",
+        "request": "launch",
+        "name": "Launch Rust",
+        "program": "${workspaceFolder}/rust/parsemath/target/debug/parsemath",
+        "args": [],
+        "cwd": "${workspaceFolder}/rust",
+        "preLaunchTask": ""
+      }
+    ]
+  }
