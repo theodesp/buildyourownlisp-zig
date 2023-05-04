@@ -17,7 +17,7 @@ pub fn build(b: *std.build.Builder) !void {
     mpc_step.dependOn(&mpc.step);
 
     const exe = b.addExecutable(.{
-        .name = "example.zig",
+        .name = "zlisp",
         .root_source_file = .{ .path = "src/main.zig" },
         .target = target,
         .optimize = optimize,
