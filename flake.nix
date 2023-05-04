@@ -40,7 +40,8 @@
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = with pkgs; [
             zigpkgs.master
-            clang
+            coreutils
+            gcc
             readline
           ];
         };

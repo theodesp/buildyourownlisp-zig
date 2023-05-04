@@ -6,6 +6,7 @@ const c = @cImport({
     @cInclude("stdio.h");
     @cInclude("readline/readline.h");
     @cInclude("readline/history.h");
+    @cInclude("mpc.h");
 });
 
 pub fn main() !void {
