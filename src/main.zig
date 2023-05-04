@@ -1,33 +1,30 @@
 const std = @import("std");
+const assert = std.debug.assert;
+const testing = std.testing;
+
+const c = @cImport({
+    @cInclude("stdio.h");
+    @cInclude("readline/readline.h");
+    @cInclude("readline/history.h");
+});
 
 pub fn main() !void {
-    var input: [2048]u8 = undefined;
     const stdout_file = std.io.getStdOut().writer();
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
-    const stdin_file = std.io.getStdIn().reader();
-    var br = std.io.bufferedReaderSize(input.len, stdin_file);
-    const stdin = br.reader();
-
-    // In a never ending loop
     while (true) {
-        // Output our prompt
-        _ = try stdout.write("lispy> ");
-        try bw.flush();
+        // Output our prompt and get input
+        const input = c.readline("lispy> ");
 
-        // Read a line of user input of maximum size 2048
-        var res: []u8 = (try stdin.readUntilDelimiterOrEof(&input, '\n')).?;
+        // Convert the C string to a Zig string
+        const zInput = std.mem.span(input);
+
+        // Add to history
+        c.add_history(zInput);
 
         // Echo input back to user
-        try stdout.print("No you're a {s}\n", .{res});
+        try stdout.print("No you're a {s}\n", .{zInput});
         try bw.flush();
     }
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
 }
