@@ -1,5 +1,9 @@
 const std = @import("std");
+const os = std.os;
 const assert = std.debug.assert;
+const builtin = @import("builtin");
+const native_os = builtin.target.os.tag;
+const print = std.debug.print;
 const testing = std.testing;
 
 const c = @import("c.zig");
@@ -9,35 +13,81 @@ pub fn main() !void {
     var bw = std.io.bufferedWriter(stdout_file);
     const stdout = bw.writer();
 
-    // Build a parser 'Adjective' to recognize descriptions
-    const Adjective = c.mpc_or(4, c.mpc_sym("wow"), c.mpc_sym("many"), c.mpc_sym("so"), c.mpc_sym("such"));
+    // signal handler, to quit when asked
+    const S = struct {
+        var should_quit: bool = false;
 
-    // Build a parser 'Noun' to recognize descriptions
-    const Noun = c.mpc_or(5, c.mpc_sym("lisp"), c.mpc_sym("language"), c.mpc_sym("book"), c.mpc_sym("build"), c.mpc_sym("c"));
+        fn handler(sig: i32, info: *const os.siginfo_t, _: ?*const anyopaque) callconv(.C) void {
+            print("A signal has been received: {}\n", .{sig});
+            // Check that we received the correct signal.
+            switch (native_os) {
+                .netbsd => {
+                    if (sig != os.SIG.HUP or sig != info.info.signo)
+                        return;
+                },
+                else => {
+                    if (sig != os.SIG.HUP and sig != info.signo)
+                        return;
+                },
+            }
+            should_quit = true;
+        }
+    };
 
-    // A Phrase is an Adjective followed by a Noun.
-    const Phrase = c.mpc_and(2, c.mpcf_strfold, Adjective, Noun, c.free);
+    var sa = os.Sigaction{
+        .handler = .{ .sigaction = &S.handler },
+        .mask = os.empty_sigset, // Do not mask any signal.
+        .flags = os.SA.SIGINFO,
+    };
 
-    // A Doge is zero or more Phrases.
-    const Doge = c.mpc_many(c.mpcf_strfold, Phrase);
+    // Quit on SIGHUP (kill -1).
+    try os.sigaction(os.SIG.HUP, &sa, null);
+    // Quit on SIGQUIT (ctrl+d).
+    try os.sigaction(os.SIG.QUIT, &sa, null);
 
-    try stdout.print("{any}", .{Doge});
-    try bw.flush();
+    // Create Some Parsers
+    const Number = c.mpc_new("number");
+    const Operator = c.mpc_new("operator");
+    const Expr = c.mpc_new("expr");
+    const Lispy = c.mpc_new("lispy");
 
-    c.mpc_delete(Doge);
+    // Define them with the following Language
+    const lang = c.mpca_lang(c.MPCA_LANG_DEFAULT,
+        \\                                                      
+        \\ number   : /-?[0-9]+/ ;                              
+        \\ operator : '+' | '-' | '*' | '/' | '%' ;                   
+        \\ expr     : <number> | '(' <operator> <expr>+ ')' ;   
+        \\ lispy    : /^/ <operator> <expr>+ /$/ ;              
+    , Number, Operator, Expr, Lispy);
+    _ = lang;
 
-    while (true) {
+    while (!S.should_quit) {
         // Output our prompt and get input
         const input = c.readline("lispy> ");
+        if (input) |string| {
+            // Convert the C string to a Zig string
+            const zInput = std.mem.span(string);
 
-        // Convert the C string to a Zig string
-        const zInput = std.mem.span(input);
+            // Add to history
+            c.add_history(zInput);
 
-        // Add to history
-        c.add_history(zInput);
+            // Attempt to Parse the user Input
+            var r: c.mpc_result_t = undefined;
+            const isValid = c.mpc_parse("<stdin>", input, Lispy, &r);
+            if (isValid == 1) {
+                // On success print and delete the AST
+                c.mpc_ast_print(@ptrCast([*c]c.mpc_ast_t, @alignCast(@alignOf(*c.mpc_ast_t), r.output)));
+                c.mpc_ast_delete(@ptrCast([*c]c.mpc_ast_t, @alignCast(@alignOf(*c.mpc_ast_t), r.output)));
+            } else {
+                // Otherwise print and delete the Error
+                c.mpc_err_print(r.@"error");
+                c.mpc_err_delete(r.@"error");
+            }
 
-        // Echo input back to user
-        try stdout.print("No you're a {s}\n", .{zInput});
-        try bw.flush();
+            // Echo input back to user
+            try stdout.print("No you're a {s}\n", .{zInput});
+            try bw.flush();
+        }
     }
+    c.mpc_cleanup(4, Number, Operator, Expr, Lispy);
 }
