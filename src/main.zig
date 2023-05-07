@@ -55,7 +55,7 @@ pub fn main() !void {
     const lang = c.mpca_lang(c.MPCA_LANG_DEFAULT,
         \\                                                      
         \\ number   : /-?[0-9]+/ ;                              
-        \\ operator : '+' | '-' | '*' | '/' | '%' ;                   
+        \\ operator : '+' | '-' | '*' | '/' | '%' | '^' ;                   
         \\ expr     : <number> | '(' <operator> <expr>+ ')' ;   
         \\ lispy    : /^/ <operator> <expr>+ /$/ ;              
     , Number, Operator, Expr, Lispy);
@@ -135,6 +135,12 @@ fn eval_op(x: c_long, op: [*c]u8, y: c_long) c_long {
     }
     if (std.mem.eql(u8, std.mem.span(op), "/")) {
         return @divFloor(x, y);
+    }
+    if (std.mem.eql(u8, std.mem.span(op), "%")) {
+        return @mod(x, y);
+    }
+    if (std.mem.eql(u8, std.mem.span(op), "^")) {
+        return x ^ y;
     }
     return 0;
 }
