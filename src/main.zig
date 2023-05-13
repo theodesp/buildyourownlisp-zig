@@ -82,16 +82,14 @@ pub fn main() !void {
             const isValid = c.mpc_parse("<stdin>", string, Lispy, &r);
             if (isValid == 1) {
                 const output = @ptrCast([*c]c.mpc_ast_t, @alignCast(@alignOf(*c.mpc_ast_t), r.output));
-                var result = try read(gpa, output);
-                defer result.deinit();
+                var result: Lval = try read(gpa, output);
+                var x = try eval(&result);
+                defer x.deinit();
 
                 // Echo input back to user
-                try result.print(stdout);
+                try x.print(stdout);
                 try bw.flush();
                 c.mpc_ast_delete(output);
-                // On success print and delete the AST
-                // c.mpc_ast_print(output);
-                // c.mpc_ast_delete(output);
             } else {
                 // Otherwise print and delete the Error
                 c.mpc_err_print(r.@"error");
@@ -102,67 +100,44 @@ pub fn main() !void {
     c.mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Lispy);
 }
 
-// fn eval(t: *c.mpc_ast_t) !Lval {
-//     // If tagged as number return it directly.
-//     if (std.mem.indexOf(u8, std.mem.span(t.tag), "number") != null) {
-//         return read_num(t);
-//     }
+fn eval(t: *Lval) anyerror!Lval {
+    if (t.type == LvalType.LVAL_SEXPR) {
+        return eval_sexpr(t);
+    }
+    return t.*;
+}
 
-//     // The operator is always second child.
-//     const op: [*c]u8 = t.children[1].*.contents;
+fn eval_sexpr(t: *Lval) anyerror!Lval {
+    for (t.*.cell.?.items) |*item| {
+        item.* = try eval(item);
+    }
+    // Error Checking.
+    for (t.*.cell.?.items, 0..) |*item, i| {
+        if (item.*.type == LvalType.LVAL_ERR) {
+            defer t.*.deinit();
+            return t.*.cell.?.orderedRemove(i);
+        }
+    }
+    // Empty Expression.
+    if (t.*.cell.?.items.len == 0) {
+        return t.*;
+    }
 
-//     // We store the third child in `x`
-//     var x = try eval(t.children[2]);
-//     var i: usize = 3;
-//     // Iterate the remaining children and combining.
-//     while (true) {
-//         const tag = t.children[i].*.tag;
-//         if (std.mem.indexOf(u8, std.mem.span(tag), "expr") != null) {
-//             const y = try eval(t.children[i]);
-//             x = eval_op(x, op, y);
-//             i += 1;
-//         } else {
-//             break;
-//         }
-//     }
+    // Single Expression.
+    if (t.*.cell.?.items.len == 1) {
+        defer t.*.deinit();
+        return t.*.cell.?.orderedRemove(0);
+    }
+    // Ensure First Element is Symbol.
+    const f = t.*.cell.?.orderedRemove(0);
+    if (f.type != LvalType.LVAL_SYM) {
+        // defer f.deinit();
+        defer t.*.deinit();
+        return Lval.init_error("S-expression Does not start with symbol!");
+    }
 
-//     return x;
-// }
-
-// // Use operator string to see which operation to perform.
-// fn eval_op(x: Lval, op: [*c]u8, y: Lval) Lval {
-//     // If either value is an error return it.
-//     if (x.type == LvalType.LVAL_ERR) {
-//         return x;
-//     }
-//     if (y.type == LvalType.LVAL_ERR) {
-//         return y;
-//     }
-//     // Otherwise do maths on the number values.
-//     if (std.mem.eql(u8, std.mem.span(op), "+")) {
-//         return Lval.init(x.num + y.num);
-//     }
-//     if (std.mem.eql(u8, std.mem.span(op), "-")) {
-//         return Lval.init(x.num - y.num);
-//     }
-//     if (std.mem.eql(u8, std.mem.span(op), "*")) {
-//         return Lval.init(x.num * y.num);
-//     }
-//     if (std.mem.eql(u8, std.mem.span(op), "/")) {
-//         if (y.num == 0) {
-//             // If second operand is zero return error.
-//             return Lval.init_error("division by zero");
-//         }
-//         return Lval.init(@divFloor(x.num, y.num));
-//     }
-//     if (std.mem.eql(u8, std.mem.span(op), "%")) {
-//         return Lval.init(@mod(x.num, y.num));
-//     }
-//     if (std.mem.eql(u8, std.mem.span(op), "^")) {
-//         return Lval.init(x.num ^ y.num);
-//     }
-//     return Lval.init_error("bad operator");
-// }
+    return t.*;
+}
 
 // Create Enumeration of Possible lval Types.
 const LvalType = enum {
