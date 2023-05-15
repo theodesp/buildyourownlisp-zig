@@ -88,6 +88,7 @@ pub fn main() !void {
 
                 // Echo input back to user
                 try x.print(stdout);
+                try stdout.print("\n", .{});
                 try bw.flush();
                 c.mpc_ast_delete(output);
             } else {
@@ -129,14 +130,55 @@ fn eval_sexpr(t: *Lval) anyerror!Lval {
         return t.*.cell.?.orderedRemove(0);
     }
     // Ensure First Element is Symbol.
-    const f = t.*.cell.?.orderedRemove(0);
+    var f = t.*.cell.?.orderedRemove(0);
+    defer f.deinit();
     if (f.type != LvalType.LVAL_SYM) {
         // defer f.deinit();
         defer t.*.deinit();
-        return Lval.init_error("S-expression Does not start with symbol!");
+        return Lval.init_error("S-expression Does not start with symbol!\n");
+    }
+    const result = builtin_op(t, f.sym);
+    return result;
+}
+
+pub fn builtin_op(t: *Lval, op: []const u8) Lval {
+    // Ensure all arguments are numbers.
+    for (t.*.cell.?.items) |*item| {
+        if (item.*.type != LvalType.LVAL_NUM) {
+            return Lval.init_error("Cannot operate on non-number!");
+        }
+    }
+    // Pop the first element.
+    var x = t.*.cell.?.orderedRemove(0);
+    defer x.deinit();
+
+    // Base case: If no arguments and sub then perform unary negation.
+    if (std.mem.eql(u8, op, "-") and t.*.cell.?.items.len == 0) {
+        x.num = -x.num;
     }
 
-    return t.*;
+    // While there are still elements remaining
+    while (t.*.cell.?.items.len > 0) {
+        // Pop the next element
+        var y = t.*.cell.?.orderedRemove(0);
+        if (std.mem.eql(u8, op, "+")) {
+            x.num += y.num;
+        }
+        if (std.mem.eql(u8, op, "-")) {
+            x.num -= y.num;
+        }
+        if (std.mem.eql(u8, op, "*")) {
+            x.num *= y.num;
+        }
+        if (std.mem.eql(u8, op, "/")) {
+            if (y.num == 0) {
+                // If second operand is zero return error.
+                return Lval.init_error("Division By Zero!");
+            }
+            return Lval.init(@divFloor(x.num, y.num));
+        }
+    }
+    return x;
 }
 
 // Create Enumeration of Possible lval Types.
