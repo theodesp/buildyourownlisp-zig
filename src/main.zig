@@ -53,6 +53,7 @@ pub fn main() !void {
     const Number = c.mpc_new("number");
     const Symbol = c.mpc_new("symbol");
     const Sexpr = c.mpc_new("sexpr");
+    const Qexpr = c.mpc_new("qexpr");
     const Expr = c.mpc_new("expr");
     const Lispy = c.mpc_new("lispy");
 
@@ -61,10 +62,11 @@ pub fn main() !void {
         \\                                                      
         \\ number   : /-?[0-9]+/ ;
         \\ symbol : '+' | '-' | '*' | '/' ;                              
-        \\ sexpr  : '(' <expr>* ')' ;                   
-        \\ expr   : <number> | <symbol> | <sexpr> ;  
+        \\ sexpr  : '(' <expr>* ')' ;
+        \\ qexpr  : '{' <expr>* '}' ;                 
+        \\ expr   : <number> | <symbol> | <sexpr> | <qexpr> ;  
         \\ lispy  : /^/ <expr>* /$/ ;          
-    , Number, Symbol, Sexpr, Expr, Lispy);
+    , Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
     _ = lang;
 
     while (!S.should_quit) {
@@ -98,7 +100,7 @@ pub fn main() !void {
             }
         }
     }
-    c.mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Lispy);
+    c.mpc_cleanup(6, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 }
 
 fn eval(t: *Lval) anyerror!Lval {
@@ -186,6 +188,7 @@ const LvalType = enum {
     LVAL_NUM,
     LVAL_SYM,
     LVAL_SEXPR,
+    LVAL_QEXPR,
     LVAL_ERR,
 };
 
@@ -214,6 +217,11 @@ const Lval = struct {
         var cell = std.ArrayList(Lval).init(allocator);
         return Lval{ .type = LvalType.LVAL_SEXPR, .num = 0, .err = "", .sym = "", .cell = cell };
     }
+    // Create a new empty Qexpr Lval
+    pub fn init_qexpr(allocator: Allocator) Lval {
+        var cell = std.ArrayList(Lval).init(allocator);
+        return Lval{ .type = LvalType.LVAL_QEXPR, .num = 0, .err = "", .sym = "", .cell = cell };
+    }
     pub fn deinit(self: *Lval) void {
         if (self.cell != null) {
             self.cell.?.deinit();
@@ -234,6 +242,9 @@ const Lval = struct {
             },
             LvalType.LVAL_SEXPR => {
                 try self.print_expr(writer, '(', ')');
+            },
+            LvalType.LVAL_QEXPR => {
+                try self.print_expr(writer, '{', '}');
             },
         }
     }
@@ -281,6 +292,10 @@ pub fn read(alloc: Allocator, t: *c.mpc_ast_t) anyerror!Lval {
         x = Lval.init_sexpr(alloc);
     }
 
+    if (std.mem.indexOf(u8, std.mem.span(t.tag), "qexpr") != null) {
+        x = Lval.init_qexpr(alloc);
+    }
+
     // Fill this list with any valid expression contained within.
     for (0..@intCast(usize, t.children_num)) |i| {
         const tag = t.children[i].*.tag;
@@ -289,6 +304,12 @@ pub fn read(alloc: Allocator, t: *c.mpc_ast_t) anyerror!Lval {
             continue;
         }
         if (std.mem.eql(u8, std.mem.span(contents), ")")) {
+            continue;
+        }
+        if (std.mem.eql(u8, std.mem.span(contents), "{")) {
+            continue;
+        }
+        if (std.mem.eql(u8, std.mem.span(contents), "}")) {
             continue;
         }
         if (std.mem.eql(u8, std.mem.span(tag), "regex")) {
