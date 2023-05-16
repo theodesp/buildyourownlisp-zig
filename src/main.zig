@@ -65,7 +65,7 @@ pub fn main() !void {
     const lang = c.mpca_lang(c.MPCA_LANG_DEFAULT,
         \\                                                      
         \\ number   : /-?[0-9]+/ ;
-        \\ symbol : '+' | '-' | '*' | '/' | "head" | "list" ;                         
+        \\ symbol : '+' | '-' | '*' | '/' | "head" | "list" | "tail" | "eval" | "join" ;                         
         \\ sexpr  : '(' <expr>* ')' ;
         \\ qexpr  : '{' <expr>* '}' ;                 
         \\ expr   : <number> | <symbol> | <sexpr> | <qexpr> ;  
@@ -89,7 +89,7 @@ pub fn main() !void {
             if (isValid == 1) {
                 const output = @ptrCast([*c]c.mpc_ast_t, @alignCast(@alignOf(*c.mpc_ast_t), r.output));
                 var result: Lval = try read(gpa, output);
-                var x = try eval(&result);
+                var x = eval(&result);
                 defer x.deinit();
 
                 // Echo input back to user
@@ -107,17 +107,17 @@ pub fn main() !void {
     c.mpc_cleanup(6, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 }
 
-fn eval(t: *Lval) anyerror!Lval {
+fn eval(t: *Lval) Lval {
     if (t.type == LvalType.LVAL_SEXPR) {
         return eval_sexpr(t);
     }
     return t.*;
 }
 
-fn eval_sexpr(t: *Lval) anyerror!Lval {
+fn eval_sexpr(t: *Lval) Lval {
     var items = t.*.cell.?.items;
     for (items) |*item| {
-        item.* = try eval(item);
+        item.* = eval(item);
     }
     // Error Checking.
     for (items, 0..) |*item, i| {
@@ -152,8 +152,17 @@ pub fn builtin(t: *Lval, func: []const u8) Lval {
     if (strcmp(u8, "head", func)) {
         return builtin_head(t);
     }
+    if (strcmp(u8, "tail", func)) {
+        return builtin_tail(t);
+    }
     if (strcmp(u8, "list", func)) {
         return builtin_list(t);
+    }
+    if (strcmp(u8, "eval", func)) {
+        return builtin_eval(t);
+    }
+    if (strcmp(u8, "join", func)) {
+        return builtin_join(t);
     }
     if (indexOf(u8, "+-/*", func) != null) {
         return builtin_op(t, func);
@@ -222,9 +231,67 @@ pub fn builtin_head(t: *Lval) Lval {
     return v;
 }
 
+pub fn builtin_tail(t: *Lval) Lval {
+    const items = t.*.cell.?.items;
+    if (items.len != 1) {
+        return Lval.init_error("Function 'tail' passed too many arguments!");
+    }
+    if (items[0].type == LvalType.LVAL_QEXPR) {
+        return Lval.init_error("Function 'tail' passed incorrect type!");
+    }
+    if (items[0].cell.?.items.len != 0) {
+        return Lval.init_error("Function 'tail' passed {}!");
+    }
+    var v = t.*.cell.?.orderedRemove(0);
+    var f = v.cell.?.orderedRemove(0);
+    defer f.deinit();
+    return v;
+}
+
+pub fn builtin_eval(t: *Lval) Lval {
+    const items = t.*.cell.?.items;
+    if (items.len == 1) {
+        return Lval.init_error("Function 'eval' passed too many arguments!");
+    }
+    if (items[0].type == LvalType.LVAL_QEXPR) {
+        return Lval.init_error("Function 'eval' passed incorrect type!");
+    }
+    var v = t.*.cell.?.orderedRemove(0);
+    v.type = LvalType.LVAL_SEXPR;
+    return eval(&v);
+}
+
+pub fn builtin_join(t: *Lval) Lval {
+    const items = t.*.cell.?.items;
+    for (items) |item| {
+        if (item.type != LvalType.LVAL_QEXPR) {
+            return Lval.init_error("Function 'join' passed incorrect type.");
+        }
+    }
+    var v = t.*.cell.?.orderedRemove(0);
+    while (items.len > 1) {
+        var x = t.*.cell.?.orderedRemove(0);
+        v = join(&v, &x) catch unreachable;
+    }
+    defer t.*.deinit();
+    return v;
+}
+
 pub fn builtin_list(t: *Lval) Lval {
     t.*.type = LvalType.LVAL_QEXPR;
     return t.*;
+}
+
+pub fn join(x: *Lval, y: *Lval) anyerror!Lval {
+    // For each cell in 'y' add it to 'x'
+    const items = y.*.cell.?.items;
+    for (items) |*item| {
+        var v = item.*.cell.?.orderedRemove(0);
+        try x.cell.?.append(v);
+    }
+    // Delete the empty 'y' and return 'x'
+    defer y.*.deinit();
+    return x.*;
 }
 
 // Create Enumeration of Possible lval Types.
