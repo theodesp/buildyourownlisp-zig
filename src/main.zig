@@ -2,10 +2,14 @@ const std = @import("std");
 const os = std.os;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-const builtin = @import("builtin");
-const native_os = builtin.target.os.tag;
-const print = std.debug.print;
+const native_os = @import("builtin").target.os.tag;
+
 const testing = std.testing;
+
+const print = std.debug.print;
+const strcmp = std.mem.eql;
+const indexOf = std.mem.indexOf;
+const toString = std.mem.span;
 
 const c = @import("c.zig");
 
@@ -61,7 +65,7 @@ pub fn main() !void {
     const lang = c.mpca_lang(c.MPCA_LANG_DEFAULT,
         \\                                                      
         \\ number   : /-?[0-9]+/ ;
-        \\ symbol : '+' | '-' | '*' | '/' ;                              
+        \\ symbol : '+' | '-' | '*' | '/' | "head" | "list" ;                         
         \\ sexpr  : '(' <expr>* ')' ;
         \\ qexpr  : '{' <expr>* '}' ;                 
         \\ expr   : <number> | <symbol> | <sexpr> | <qexpr> ;  
@@ -74,7 +78,7 @@ pub fn main() !void {
         const input = c.readline("lispy> ");
         if (input) |string| {
             // Convert the C string to a Zig string
-            const zInput = std.mem.span(string);
+            const zInput = toString(string);
 
             // Add to history
             c.add_history(zInput);
@@ -111,23 +115,24 @@ fn eval(t: *Lval) anyerror!Lval {
 }
 
 fn eval_sexpr(t: *Lval) anyerror!Lval {
-    for (t.*.cell.?.items) |*item| {
+    var items = t.*.cell.?.items;
+    for (items) |*item| {
         item.* = try eval(item);
     }
     // Error Checking.
-    for (t.*.cell.?.items, 0..) |*item, i| {
+    for (items, 0..) |*item, i| {
         if (item.*.type == LvalType.LVAL_ERR) {
             defer t.*.deinit();
             return t.*.cell.?.orderedRemove(i);
         }
     }
     // Empty Expression.
-    if (t.*.cell.?.items.len == 0) {
+    if (items.len == 0) {
         return t.*;
     }
 
     // Single Expression.
-    if (t.*.cell.?.items.len == 1) {
+    if (items.len == 1) {
         defer t.*.deinit();
         return t.*.cell.?.orderedRemove(0);
     }
@@ -139,13 +144,27 @@ fn eval_sexpr(t: *Lval) anyerror!Lval {
         defer t.*.deinit();
         return Lval.init_error("S-expression Does not start with symbol!\n");
     }
-    const result = builtin_op(t, f.sym);
+    const result = builtin(t, f.sym);
     return result;
+}
+
+pub fn builtin(t: *Lval, func: []const u8) Lval {
+    if (strcmp(u8, "head", func)) {
+        return builtin_head(t);
+    }
+    if (strcmp(u8, "list", func)) {
+        return builtin_list(t);
+    }
+    if (indexOf(u8, "+-/*", func) != null) {
+        return builtin_op(t, func);
+    }
+    return Lval.init_error("Unknown Function!");
 }
 
 pub fn builtin_op(t: *Lval, op: []const u8) Lval {
     // Ensure all arguments are numbers.
-    for (t.*.cell.?.items) |*item| {
+    var items = t.*.cell.?.items;
+    for (items) |*item| {
         if (item.*.type != LvalType.LVAL_NUM) {
             return Lval.init_error("Cannot operate on non-number!");
         }
@@ -155,24 +174,24 @@ pub fn builtin_op(t: *Lval, op: []const u8) Lval {
     defer x.deinit();
 
     // Base case: If no arguments and sub then perform unary negation.
-    if (std.mem.eql(u8, op, "-") and t.*.cell.?.items.len == 0) {
+    if (strcmp(u8, op, "-") and items.len == 0) {
         x.num = -x.num;
     }
 
     // While there are still elements remaining
-    while (t.*.cell.?.items.len > 0) {
+    while (items.len > 0) {
         // Pop the next element
         var y = t.*.cell.?.orderedRemove(0);
-        if (std.mem.eql(u8, op, "+")) {
+        if (strcmp(u8, op, "+")) {
             x.num += y.num;
         }
-        if (std.mem.eql(u8, op, "-")) {
+        if (strcmp(u8, op, "-")) {
             x.num -= y.num;
         }
-        if (std.mem.eql(u8, op, "*")) {
+        if (strcmp(u8, op, "*")) {
             x.num *= y.num;
         }
-        if (std.mem.eql(u8, op, "/")) {
+        if (strcmp(u8, op, "/")) {
             if (y.num == 0) {
                 // If second operand is zero return error.
                 return Lval.init_error("Division By Zero!");
@@ -181,6 +200,31 @@ pub fn builtin_op(t: *Lval, op: []const u8) Lval {
         }
     }
     return x;
+}
+
+pub fn builtin_head(t: *Lval) Lval {
+    const items = t.*.cell.?.items;
+    if (items.len == 1) {
+        return Lval.init_error("Function 'head' passed too many arguments!");
+    }
+    if (items[0].type == LvalType.LVAL_QEXPR) {
+        return Lval.init_error("Function 'head' passed incorrect type!");
+    }
+    if (items[0].cell.?.items.len != 0) {
+        return Lval.init_error("Function 'head' passed {}!");
+    }
+
+    var v = t.*.cell.?.orderedRemove(0);
+    while (v.cell.?.items.len > 1) {
+        var f = v.cell.?.orderedRemove(1);
+        defer f.deinit();
+    }
+    return v;
+}
+
+pub fn builtin_list(t: *Lval) Lval {
+    t.*.type = LvalType.LVAL_QEXPR;
+    return t.*;
 }
 
 // Create Enumeration of Possible lval Types.
@@ -266,7 +310,7 @@ const Lval = struct {
 
 pub fn read_num(t: *c.mpc_ast_t) Lval {
     // Check if there is some error in conversion.
-    if (std.fmt.parseInt(c_long, std.mem.span(t.contents), 10)) |num| {
+    if (std.fmt.parseInt(c_long, toString(t.contents), 10)) |num| {
         return Lval.init(num);
     } else |_| {
         return Lval.init_error("invalid number");
@@ -274,25 +318,24 @@ pub fn read_num(t: *c.mpc_ast_t) Lval {
 }
 
 pub fn read(alloc: Allocator, t: *c.mpc_ast_t) anyerror!Lval {
-
     // If Symbol or Number return conversion to that type.
-    if (std.mem.indexOf(u8, std.mem.span(t.tag), "number") != null) {
+    if (indexOf(u8, toString(t.tag), "number") != null) {
         return read_num(t);
     }
-    if (std.mem.indexOf(u8, std.mem.span(t.tag), "symbol") != null) {
-        return Lval.init_sym(std.mem.span(t.contents));
+    if (indexOf(u8, toString(t.tag), "symbol") != null) {
+        return Lval.init_sym(toString(t.contents));
     }
 
     // If root (>) or sexpr then create empty list.
     var x: Lval = undefined;
-    if (std.mem.eql(u8, std.mem.span(t.tag), ">")) {
+    if (strcmp(u8, toString(t.tag), ">")) {
         x = Lval.init_sexpr(alloc);
     }
-    if (std.mem.indexOf(u8, std.mem.span(t.tag), "sexpr") != null) {
+    if (indexOf(u8, toString(t.tag), "sexpr") != null) {
         x = Lval.init_sexpr(alloc);
     }
 
-    if (std.mem.indexOf(u8, std.mem.span(t.tag), "qexpr") != null) {
+    if (indexOf(u8, toString(t.tag), "qexpr") != null) {
         x = Lval.init_qexpr(alloc);
     }
 
@@ -300,19 +343,19 @@ pub fn read(alloc: Allocator, t: *c.mpc_ast_t) anyerror!Lval {
     for (0..@intCast(usize, t.children_num)) |i| {
         const tag = t.children[i].*.tag;
         const contents = t.children[i].*.contents;
-        if (std.mem.eql(u8, std.mem.span(contents), "(")) {
+        if (strcmp(u8, toString(contents), "(")) {
             continue;
         }
-        if (std.mem.eql(u8, std.mem.span(contents), ")")) {
+        if (strcmp(u8, toString(contents), ")")) {
             continue;
         }
-        if (std.mem.eql(u8, std.mem.span(contents), "{")) {
+        if (strcmp(u8, toString(contents), "{")) {
             continue;
         }
-        if (std.mem.eql(u8, std.mem.span(contents), "}")) {
+        if (strcmp(u8, toString(contents), "}")) {
             continue;
         }
-        if (std.mem.eql(u8, std.mem.span(tag), "regex")) {
+        if (strcmp(u8, toString(tag), "regex")) {
             continue;
         }
         const lval = read(alloc, t.children[i]) catch unreachable;
