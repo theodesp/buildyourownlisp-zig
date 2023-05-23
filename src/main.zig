@@ -172,8 +172,7 @@ pub fn builtin(t: *Lval, func: []const u8) Lval {
 
 pub fn builtin_op(t: *Lval, op: []const u8) Lval {
     // Ensure all arguments are numbers.
-    var items = t.*.cell.?.items;
-    for (items) |*item| {
+    for (t.*.cell.?.items) |*item| {
         if (item.*.type != LvalType.LVAL_NUM) {
             return Lval.init_error("Cannot operate on non-number!");
         }
@@ -183,12 +182,12 @@ pub fn builtin_op(t: *Lval, op: []const u8) Lval {
     defer x.deinit();
 
     // Base case: If no arguments and sub then perform unary negation.
-    if (strcmp(u8, op, "-") and items.len == 0) {
+    if (strcmp(u8, op, "-") and t.*.cell.?.items.len == 0) {
         x.num = -x.num;
     }
 
     // While there are still elements remaining
-    while (items.len > 0) {
+    while (t.*.cell.?.items.len > 0) {
         // Pop the next element
         var y = t.*.cell.?.orderedRemove(0);
         if (strcmp(u8, op, "+")) {
@@ -213,13 +212,16 @@ pub fn builtin_op(t: *Lval, op: []const u8) Lval {
 
 pub fn builtin_head(t: *Lval) Lval {
     const items = t.*.cell.?.items;
-    if (items.len == 1) {
+    if (items.len != 1) {
         return Lval.init_error("Function 'head' passed too many arguments!");
     }
-    if (items[0].type == LvalType.LVAL_QEXPR) {
+    if (items[0].type != LvalType.LVAL_QEXPR) {
         return Lval.init_error("Function 'head' passed incorrect type!");
     }
-    if (items[0].cell.?.items.len != 0) {
+    if (items[0].type == LvalType.LVAL_NUM) {
+        return Lval.init_error("Function 'head' passed incorrect type!");
+    }
+    if (items[0].cell.?.items.len == 0) {
         return Lval.init_error("Function 'head' passed {}!");
     }
 
