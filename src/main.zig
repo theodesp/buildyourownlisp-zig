@@ -65,7 +65,7 @@ pub fn main() !void {
     const lang = c.mpca_lang(c.MPCA_LANG_DEFAULT,
         \\                                                      
         \\ number   : /-?[0-9]+/ ;
-        \\ symbol : '+' | '-' | '*' | '/' | "head" | "list" | "tail" | "eval" | "join" ;                         
+        \\ symbol : /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;                         
         \\ sexpr  : '(' <expr>* ')' ;
         \\ qexpr  : '{' <expr>* '}' ;                 
         \\ expr   : <number> | <symbol> | <sexpr> | <qexpr> ;  
@@ -73,6 +73,8 @@ pub fn main() !void {
     , Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
     _ = lang;
 
+    var env = Lenv.init(gpa);
+    defer env.deinit();
     while (!S.should_quit) {
         // Output our prompt and get input
         const input = c.readline("lispy> ");
@@ -89,7 +91,7 @@ pub fn main() !void {
             if (isValid == 1) {
                 const output = @ptrCast([*c]c.mpc_ast_t, @alignCast(@alignOf(*c.mpc_ast_t), r.output));
                 var result: Lval = try read(gpa, output);
-                var x = eval(&result);
+                var x = eval(&env, &result);
                 defer x.deinit();
 
                 // Echo input back to user
@@ -107,17 +109,24 @@ pub fn main() !void {
     c.mpc_cleanup(6, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 }
 
-fn eval(t: *Lval) Lval {
+fn eval(e: *Lenv, t: *Lval) Lval {
+    if (t.type == LvalType.LVAL_SYM) {
+        const v = e.*.list.get(t.sym);
+        if (v) |x| {
+            defer t.*.deinit();
+            return x;
+        }
+    }
     if (t.type == LvalType.LVAL_SEXPR) {
-        return eval_sexpr(t);
+        return eval_sexpr(e, t);
     }
     return t.*;
 }
 
-fn eval_sexpr(t: *Lval) Lval {
+fn eval_sexpr(e: *Lenv, t: *Lval) Lval {
     var items = t.*.cell.?.items;
     for (items) |*item| {
-        item.* = eval(item);
+        item.* = eval(e, item);
     }
     // Error Checking.
     for (items, 0..) |*item, i| {
@@ -144,33 +153,34 @@ fn eval_sexpr(t: *Lval) Lval {
         defer t.*.deinit();
         return Lval.init_error("S-expression Does not start with symbol!\n");
     }
-    const result = builtin(t, f.sym);
+    const result = builtin(e, t, f.sym);
     return result;
 }
 
-pub fn builtin(t: *Lval, func: []const u8) Lval {
+pub fn builtin(e: *Lenv, t: *Lval, func: []const u8) Lval {
     if (strcmp(u8, "head", func)) {
-        return builtin_head(t);
+        return builtin_head(e, t);
     }
     if (strcmp(u8, "tail", func)) {
-        return builtin_tail(t);
+        return builtin_tail(e, t);
     }
     if (strcmp(u8, "list", func)) {
-        return builtin_list(t);
+        return builtin_list(e, t);
     }
     if (strcmp(u8, "eval", func)) {
-        return builtin_eval(t);
+        return builtin_eval(e, t);
     }
     if (strcmp(u8, "join", func)) {
-        return builtin_join(t);
+        return builtin_join(e, t);
     }
     if (indexOf(u8, "+-/*", func) != null) {
-        return builtin_op(t, func);
+        return builtin_op(e, t, func);
     }
     return Lval.init_error("Unknown Function!");
 }
 
-pub fn builtin_op(t: *Lval, op: []const u8) Lval {
+pub fn builtin_op(e: *Lenv, t: *Lval, op: []const u8) Lval {
+    _ = e;
     // Ensure all arguments are numbers.
     for (t.*.cell.?.items) |*item| {
         if (item.*.type != LvalType.LVAL_NUM) {
@@ -210,7 +220,8 @@ pub fn builtin_op(t: *Lval, op: []const u8) Lval {
     return x;
 }
 
-pub fn builtin_head(t: *Lval) Lval {
+pub fn builtin_head(e: *Lenv, t: *Lval) Lval {
+    _ = e;
     const items = t.*.cell.?.items;
     if (items.len != 1) {
         return Lval.init_error("Function 'head' passed too many arguments!");
@@ -233,7 +244,8 @@ pub fn builtin_head(t: *Lval) Lval {
     return v;
 }
 
-pub fn builtin_tail(t: *Lval) Lval {
+pub fn builtin_tail(e: *Lenv, t: *Lval) Lval {
+    _ = e;
     const items = t.*.cell.?.items;
     if (items.len != 1) {
         return Lval.init_error("Function 'tail' passed too many arguments!");
@@ -250,7 +262,7 @@ pub fn builtin_tail(t: *Lval) Lval {
     return v;
 }
 
-pub fn builtin_eval(t: *Lval) Lval {
+pub fn builtin_eval(e: *Lenv, t: *Lval) Lval {
     const items = t.*.cell.?.items;
     if (items.len == 1) {
         return Lval.init_error("Function 'eval' passed too many arguments!");
@@ -260,10 +272,11 @@ pub fn builtin_eval(t: *Lval) Lval {
     }
     var v = t.*.cell.?.orderedRemove(0);
     v.type = LvalType.LVAL_SEXPR;
-    return eval(&v);
+    return eval(e, &v);
 }
 
-pub fn builtin_join(t: *Lval) Lval {
+pub fn builtin_join(e: *Lenv, t: *Lval) Lval {
+    _ = e;
     for (t.*.cell.?.items) |item| {
         if (item.type != LvalType.LVAL_QEXPR) {
             return Lval.init_error("Function 'join' passed incorrect type.");
@@ -282,7 +295,8 @@ pub fn builtin_join(t: *Lval) Lval {
     return v;
 }
 
-pub fn builtin_list(t: *Lval) Lval {
+pub fn builtin_list(e: *Lenv, t: *Lval) Lval {
+    _ = e;
     t.*.type = LvalType.LVAL_QEXPR;
     return t.*;
 }
@@ -302,22 +316,73 @@ pub fn join(x: *Lval, y: *Lval) anyerror!Lval {
 const LvalType = enum {
     LVAL_NUM,
     LVAL_SYM,
+    LVAL_FUN,
     LVAL_SEXPR,
     LVAL_QEXPR,
     LVAL_ERR,
 };
 
+const Lenv = struct {
+    list: std.StringHashMap(Lval),
+    // Create a new number type lval.
+    pub fn init(allocator: Allocator) Lenv {
+        return Lenv{ .list = std.StringHashMap(Lval).init(allocator) };
+    }
+    pub fn deinit(self: *Lenv) void {
+        self.list.deinit();
+    }
+};
+
+fn add_builtin(env: *Lenv, name: []const u8, func: fn (*Lenv, *Lval) Lval) void {
+    _ = func;
+    _ = name;
+    _ = env;
+}
+
+fn add_builtins(e: *Lenv) void {
+    add_builtin(e, "list", builtin_list);
+    add_builtin(e, "head", builtin_head);
+    add_builtin(e, "tail", builtin_tail);
+    add_builtin(e, "eval", builtin_eval);
+    add_builtin(e, "join", builtin_join);
+
+    add_builtin(e, "+", builtin_add);
+    add_builtin(e, "-", builtin_sub);
+    add_builtin(e, "*", builtin_mul);
+    add_builtin(e, "/", builtin_div);
+}
+
+fn builtin_add(e: *Lenv, a: *Lval) Lval {
+    return builtin_op(e, a, "+");
+}
+fn builtin_sub(e: *Lenv, a: *Lval) Lval {
+    return builtin_op(e, a, "-");
+}
+fn builtin_mul(e: *Lenv, a: *Lval) Lval {
+    return builtin_op(e, a, "*");
+}
+fn builtin_div(e: *Lenv, a: *Lval) Lval {
+    return builtin_op(e, a, "/");
+}
+
 // Declare New lval Struct
 const Lval = struct {
+    const Fn = fn (*Lenv, *Lval) Lval;
     type: LvalType,
     num: i64,
     err: []const u8,
     sym: []const u8,
+    lbuiltin: *const Fn = undefined,
     cell: ?std.ArrayList(Lval) = null,
 
     // Create a new number type lval.
     pub fn init(i: i64) Lval {
-        return Lval{ .type = LvalType.LVAL_NUM, .num = i, .err = "", .sym = "" };
+        return Lval{
+            .type = LvalType.LVAL_NUM,
+            .num = i,
+            .err = "",
+            .sym = "",
+        };
     }
     // Create a new error type Lval
     pub fn init_error(m: []const u8) Lval {
@@ -336,6 +401,9 @@ const Lval = struct {
     pub fn init_qexpr(allocator: Allocator) Lval {
         var cell = std.ArrayList(Lval).init(allocator);
         return Lval{ .type = LvalType.LVAL_QEXPR, .num = 0, .err = "", .sym = "", .cell = cell };
+    }
+    pub fn init_fun(func: fn (*Lenv, *Lval) Lval) Lval {
+        return Lval{ .type = LvalType.LVAL_FUN, .num = 0, .err = "", .sym = "", .lbuiltin = func };
     }
     pub fn deinit(self: *Lval) void {
         if (self.cell != null) {
@@ -360,6 +428,9 @@ const Lval = struct {
             },
             LvalType.LVAL_QEXPR => {
                 try self.print_expr(writer, '{', '}');
+            },
+            LvalType.LVAL_FUN => {
+                try writer.print("<function>", .{});
             },
         }
     }
