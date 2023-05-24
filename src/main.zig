@@ -238,10 +238,10 @@ pub fn builtin_tail(t: *Lval) Lval {
     if (items.len != 1) {
         return Lval.init_error("Function 'tail' passed too many arguments!");
     }
-    if (items[0].type == LvalType.LVAL_QEXPR) {
+    if (items[0].type != LvalType.LVAL_QEXPR) {
         return Lval.init_error("Function 'tail' passed incorrect type!");
     }
-    if (items[0].cell.?.items.len != 0) {
+    if (items[0].cell.?.items.len == 0) {
         return Lval.init_error("Function 'tail' passed {}!");
     }
     var v = t.*.cell.?.orderedRemove(0);
@@ -264,15 +264,18 @@ pub fn builtin_eval(t: *Lval) Lval {
 }
 
 pub fn builtin_join(t: *Lval) Lval {
-    const items = t.*.cell.?.items;
-    for (items) |item| {
+    for (t.*.cell.?.items) |item| {
         if (item.type != LvalType.LVAL_QEXPR) {
             return Lval.init_error("Function 'join' passed incorrect type.");
         }
     }
+    // Grab the first item
     var v = t.*.cell.?.orderedRemove(0);
-    while (items.len > 1) {
+    // for each of the rest
+    for (t.*.cell.?.items) |_| {
+        // Grab the next item
         var x = t.*.cell.?.orderedRemove(0);
+        // Join them together
         v = join(&v, &x) catch unreachable;
     }
     defer t.*.deinit();
@@ -286,9 +289,8 @@ pub fn builtin_list(t: *Lval) Lval {
 
 pub fn join(x: *Lval, y: *Lval) anyerror!Lval {
     // For each cell in 'y' add it to 'x'
-    const items = y.*.cell.?.items;
-    for (items) |*item| {
-        var v = item.*.cell.?.orderedRemove(0);
+    for (y.*.cell.?.items) |_| {
+        var v = y.*.cell.?.orderedRemove(0);
         try x.cell.?.append(v);
     }
     // Delete the empty 'y' and return 'x'
