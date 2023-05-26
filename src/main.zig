@@ -113,10 +113,10 @@ pub fn main() !void {
 
 fn eval(e: *Lenv, t: *Lval) Lval {
     if (t.type == LvalType.LVAL_SYM) {
-        var iter = e.*.list.keyIterator();
-        while (iter.next()) |key| {
-            std.debug.print("{s}\n", .{key.*});
-        }
+        // var iter = e.*.list.keyIterator();
+        // while (iter.next()) |key| {
+        //     std.debug.print("{s}\n", .{key.*});
+        // }
         const v = e.*.list.get(t.sym);
         if (v) |x| {
             defer t.*.deinit();
@@ -382,6 +382,10 @@ fn add_builtins(e: *Lenv) anyerror!void {
     try add_builtin(e, "-", builtin_sub);
     try add_builtin(e, "*", builtin_mul);
     try add_builtin(e, "/", builtin_div);
+    try add_builtin(e, ">", builtin_gt);
+    try add_builtin(e, "<", builtin_lt);
+    try add_builtin(e, ">=", builtin_ge);
+    try add_builtin(e, "<=", builtin_le);
 
     try add_builtin(e, "def", builtin_def);
 }
@@ -398,6 +402,47 @@ fn builtin_mul(e: *Lenv, a: *Lval) Lval {
 fn builtin_div(e: *Lenv, a: *Lval) Lval {
     return builtin_op(e, a, "/");
 }
+fn builtin_gt(e: *Lenv, a: *Lval) Lval {
+    return builtin_ord(e, a, ">");
+}
+fn builtin_lt(e: *Lenv, a: *Lval) Lval {
+    return builtin_ord(e, a, "<");
+}
+fn builtin_ge(e: *Lenv, a: *Lval) Lval {
+    return builtin_ord(e, a, ">=");
+}
+fn builtin_le(e: *Lenv, a: *Lval) Lval {
+    return builtin_ord(e, a, "<=");
+}
+
+pub fn builtin_ord(e: *Lenv, t: *Lval, op: []const u8) Lval {
+    _ = e;
+    // Ensure all arguments are numbers.
+    for (t.*.cell.?.items) |*item| {
+        if (item.*.type != LvalType.LVAL_NUM) {
+            return Lval.init_error("Cannot operate on non-number!");
+        }
+    }
+    // Pop the first element.
+    var x = t.*.cell.?.orderedRemove(0);
+    // Pop the next element
+    var y = t.*.cell.?.orderedRemove(0);
+    defer t.*.deinit();
+    var r: u1 = 0;
+    if (strcmp(u8, op, ">")) {
+        r = @boolToInt(x.num > y.num);
+    }
+    if (strcmp(u8, op, "<")) {
+        r = @boolToInt(x.num < y.num);
+    }
+    if (strcmp(u8, op, ">=")) {
+        r = @boolToInt(x.num >= y.num);
+    }
+    if (strcmp(u8, op, "<=")) {
+        r = @boolToInt(x.num <= y.num);
+    }
+    return Lval.init(r);
+}
 
 // Declare New lval Struct
 const Lval = struct {
@@ -406,6 +451,7 @@ const Lval = struct {
     num: i64,
     err: []const u8,
     sym: []const u8,
+
     lbuiltin: *const Fn = undefined,
     cell: ?std.ArrayList(Lval) = null,
 
